@@ -1,4 +1,6 @@
 *.mp4
 *.avi
+*.png
+*.jpg
 Video/*.mp4
 weights/*.onnx
