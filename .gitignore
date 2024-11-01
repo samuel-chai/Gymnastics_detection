@@ -2,5 +2,6 @@
 *.avi
 *.png
 *.jpg
+*.gif
 Video/*.mp4
 weights/*.onnx
