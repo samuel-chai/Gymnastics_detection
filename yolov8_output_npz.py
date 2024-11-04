@@ -189,7 +189,7 @@ class Keypoint():
         conf = 0.7
         pred = pred[pred[:, 4] > conf]
         if len(pred) == 0:
-            return None, None, None
+            return [], []  # 沒有檢測到的物件，返回空列表
         bboxs = xywh2xyxy(pred)
         bboxs = nms(bboxs, iou_thresh=0.6)
         bboxs = np.array(bboxs)
@@ -198,12 +198,16 @@ class Keypoint():
 
         boxes, keypoints, segments = [], [], []
         for box in bboxs:
-            det_bbox = box[0:2]
+            # Bounding box (左上角 x, 左上角 y, 右下角 x, 右下角 y)
+            det_bbox = box[:4].tolist()
+            boxes.append([det_bbox])  # 包裝成嵌套格式
+            
+            # Keypoints [(x, y, confidence), (x, y, confidence), ...]
             kpts = box[5:]
-            boxes.append(det_bbox)
-            keypoints.append(kpts[:2])
-            segments.append(None)  # 沒有分割，填入 None
-        return np.array(boxes), np.array(keypoints), np.array(segments)
+            kpts_formatted = [[kpts[i], kpts[i + 1], kpts[i + 2]] for i in range(0, len(kpts), 3)]
+            keypoints.append(kpts_formatted)
+
+        return boxes, keypoints
             
 if __name__ == '__main__':
     model_path = 'weights/yolov8x-pose.onnx'
@@ -233,16 +237,14 @@ if __name__ == '__main__':
         if not ret:
             break
 
-        boxes, keypoints, segments = keydet.inference(frame)
-        if boxes is not None:
-            all_boxes.extend(boxes)
-            all_keypoints.extend(keypoints)
-            all_segments.extend(segments)
+        boxes, keypoints = keydet.inference(frame)
+        all_boxes.append(boxes)
+        all_keypoints.append(keypoints)
 
         frame_count += 1
 
-    metadata = {"description": "YOLOv8 人體姿勢檢測輸出"}
-    np.savez(output_file_path, boxes=np.array(all_boxes), segments=np.array(all_segments), keypoints=np.array(all_keypoints), metadata=metadata)
+    metadata = {"w": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), "h": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}
+    np.savez(output_file_path, boxes=np.array(all_boxes, dtype=object), segments=np.array([[]]*len(all_boxes), dtype=object), keypoints=np.array(all_keypoints, dtype=object), metadata=metadata)
 
     cap.release()
     print(f"檢測結果已保存至 {output_file_path}")
