@@ -453,14 +453,14 @@ if __name__ == '__main__':
     right_edge_x = frame_width
     results = []
     click_coords = None  # 初始化点击坐标
+    click_coords_list = []  # 初始化点击坐标列表
 
     
     def mouse_callback(event, x, y, flags, param):
-        global click_coords
+        global click_coords_list
         if event == cv2.EVENT_LBUTTONDOWN and paused:
-            click_coords = (x, y)
+            click_coords_list.append((x, y))
 
-    
     cv2.namedWindow("Output Video")
     cv2.setMouseCallback("Output Video", mouse_callback)
 
@@ -520,14 +520,20 @@ if __name__ == '__main__':
             paused = not paused
         
         # 计算并显示点击点与髋部坐标的距离
-        if paused and click_coords is not None and keydet.hip_x_avg != 0 and keydet.hip_y_relative != 0:
-            click_x, click_y = click_coords
-            hip_x, hip_y = keydet.hip_x_avg, keydet.hip_y_relative
-            distance_x = (click_x - hip_x) * keydet.platform_ratio
-            distance_y = (click_y - hip_y) * keydet.platform_ratio
-            distance_text = f"Distance: X={distance_x:.2f} m, Y={distance_y:.2f} m"
-            cv2.putText(output_image, distance_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+        if paused:
+            for idx, click_coords in enumerate(click_coords_list):
+                click_x, click_y = click_coords
+                if keydet.hip_x_avg != 0 and keydet.hip_y_relative != 0:
+                    hip_x, hip_y = keydet.hip_x_avg, keydet.hip_y_relative
+                    distance_x = (click_x - hip_x) * keydet.platform_ratio
+                    distance_y = (click_y - hip_y) * keydet.platform_ratio
+                    distance_text = f"Click {idx+1}: X={distance_x:.2f} m, Y={distance_y:.2f} m"
+                    cv2.putText(output_image, distance_text, (1509, 50 + 25 * idx), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+                # 在画面上标记点击的点并添加标签
+                cv2.circle(output_image, (click_x, click_y), 5, (0, 0, 255), -1)
+                cv2.putText(output_image, f"Click {idx+1}", (click_x + 10, click_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 1)
             cv2.imshow("Output Video", output_image)
+
 
     # 結束時提示用戶選擇 CSV 文件的保存位置
     root = tk.Tk()
