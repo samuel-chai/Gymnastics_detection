@@ -17,9 +17,3 @@
 2. 另外裝yolo8x-pose.onnx, yolo8_platform_v8.onnx放入weights裡面
 3. 直接執行main_detection.py
 4. 選取執行video, 輸出位置, detection完後輸出csv
-
----
-## 測試畫面
-![image](/data/test.gif)
-## 執行畫面
-![image](/data/123.gif)
