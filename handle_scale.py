@@ -446,14 +446,23 @@ if __name__ == '__main__':
     frame_count = 0
     start_time = time.time()
 
-    # 初始化宽度列表和平台比例
-    widths = []
-    platform_ratio = None
 
-    # 初始化髋部坐标和原点
-    hip_origin = None
+    widths = [] # 初始化宽度列表和平台比例
+    platform_ratio = None
+    hip_origin = None # 初始化髋部坐标和原点
     right_edge_x = frame_width
     results = []
+    click_coords = None  # 初始化点击坐标
+
+    
+    def mouse_callback(event, x, y, flags, param):
+        global click_coords
+        if event == cv2.EVENT_LBUTTONDOWN and paused:
+            click_coords = (x, y)
+
+    
+    cv2.namedWindow("Output Video")
+    cv2.setMouseCallback("Output Video", mouse_callback)
 
     while True:
         if not paused:
@@ -509,6 +518,16 @@ if __name__ == '__main__':
             break
         elif key == ord(' '):
             paused = not paused
+        
+        # 计算并显示点击点与髋部坐标的距离
+        if paused and click_coords is not None and keydet.hip_x_avg != 0 and keydet.hip_y_relative != 0:
+            click_x, click_y = click_coords
+            hip_x, hip_y = keydet.hip_x_avg, keydet.hip_y_relative
+            distance_x = (click_x - hip_x) * keydet.platform_ratio
+            distance_y = (click_y - hip_y) * keydet.platform_ratio
+            distance_text = f"Distance: X={distance_x:.2f} m, Y={distance_y:.2f} m"
+            cv2.putText(output_image, distance_text, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            cv2.imshow("Output Video", output_image)
 
     # 結束時提示用戶選擇 CSV 文件的保存位置
     root = tk.Tk()
