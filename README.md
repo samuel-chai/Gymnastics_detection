@@ -1,4 +1,4 @@
-# Gymnastics Detection
+Gymnastics Detection
 ## 專案介紹
 這個專案是基於 YOLOv8 模型進行的體操動作檢測系統。利用 ONNX 格式的模型來實時檢測運動員的動作，協助教練和運動員進行表現分析。
 
