@@ -8,6 +8,8 @@ import tkinter as tk
 from tkinter import filedialog
 import pandas as pd
 
+
+
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # 定义一个调色板数组，其中每个元素是一个包含RGB值的列表，用于表示不同的颜色
@@ -397,6 +399,8 @@ class ObjectDetection():
                 cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             return image, widths
 
+
+
 if __name__ == '__main__':
     keypoint_model_path = 'weights/yolov8x-pose.onnx'
     object_model_path = 'weights/yolo8_platform_v8.onnx'
@@ -433,6 +437,10 @@ if __name__ == '__main__':
     # 创建 VideoWriter 对象
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 使用 MP4 编码
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+    
+    paused = False  # 用于跟踪视频是否暂停
+    frame_count = 0
+    start_time = time.time()
 
     # 初始化帧数计数器和起始时间
     frame_count = 0
@@ -448,57 +456,59 @@ if __name__ == '__main__':
     results = []
 
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Info: End of video file.")
+        if not paused:
+            ret, frame = cap.read()
+            if not ret:
+                print("Info: End of video file.")
+                break
+
+            # 对读入的帧进行人体关键点检测
+            frame = keydet.inference(frame)
+            # 对读入的帧进行物体检测
+            output_image, detected_widths = obj_det.inference(frame)
+
+            # 计算帧数和秒数
+            frame_count += 1
+            elapsed_time = time.time() - start_time
+            seconds = elapsed_time
+
+            # 提取髋部的平均座標和角度
+            hip_x_avg = keydet.hip_x_avg if keydet.hip_x_avg is not None else 0
+            hip_y_relative = keydet.hip_y_relative if keydet.hip_y_relative is not None else 0
+            angle = keydet.angle if keydet.angle is not None else 0
+            angle_thigh_body = keydet.angle_thigh_body if keydet.angle_thigh_body is not None else 0
+            angle_knee_left = keydet.angle_knee_left if keydet.angle_knee_left is not None else 0
+            angle_knee_right = keydet.angle_knee_right if keydet.angle_knee_right is not None else 0
+
+            # 收集當前幀的數據
+            results.append([frame_count, seconds, hip_x_avg, hip_y_relative, angle, angle_thigh_body, angle_knee_left, angle_knee_right])
+
+            # 计算前100帧的平均宽度
+            if frame_count <= 100:
+                widths.extend([width for _, _, _, _, width in detected_widths])
+                if frame_count == 100:
+                    average_width = sum(widths) / len(widths)
+                    platform_ratio = 1.25 / average_width
+                    keydet.platform_ratio = platform_ratio  # 设置 platform_ratio
+                    print(f"Platform ratio: {platform_ratio:.6f} m/px")
+
+            # 在帧的左下角绘制帧数和秒数
+            text = f"Frames: {frame_count}, Seconds: {seconds:.3f}"
+            cv2.putText(output_image, text, (10, frame_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1, cv2.LINE_AA)
+            # 提取并显示当前帧的宽度
+            if detected_widths:
+                current_width = detected_widths[0][4]  # 提取第一个检测框的宽度
+                cv2.putText(output_image, f"Platform Width: {current_width} px", (10, frame_height - 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # 实时显示处理后的视频帧
+            cv2.imshow("Output Video", output_image)
+            out.write(output_image)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
             break
-
-        # 对读入的帧进行人体关键点检测
-        frame = keydet.inference(frame)
-        # 对读入的帧进行物体检测
-        output_image, detected_widths = obj_det.inference(frame)
-
-        # 计算帧数和秒数
-        frame_count += 1
-        elapsed_time = time.time() - start_time
-        seconds = elapsed_time
-
-        # 提取髋部的平均座標和角度
-        hip_x_avg = keydet.hip_x_avg if keydet.hip_x_avg is not None else 0
-        hip_y_relative = keydet.hip_y_relative if keydet.hip_y_relative is not None else 0
-        angle = keydet.angle if keydet.angle is not None else 0
-        angle_thigh_body = keydet.angle_thigh_body if keydet.angle_thigh_body is not None else 0
-        angle_knee_left = keydet.angle_knee_left if keydet.angle_knee_left is not None else 0
-        angle_knee_right = keydet.angle_knee_right if keydet.angle_knee_right is not None else 0
-
-        # 收集當前幀的數據
-        results.append([frame_count, seconds, hip_x_avg, hip_y_relative, angle, angle_thigh_body, angle_knee_left, angle_knee_right])
-        
-
-        # 计算前100帧的平均宽度
-        if frame_count <= 100:
-            widths.extend([width for _, _, _, _, width in detected_widths])
-            if frame_count == 100:
-                average_width = sum(widths) / len(widths)
-                platform_ratio = 1.25 / average_width
-                keydet.platform_ratio = platform_ratio  # 设置 platform_ratio
-                print(f"Platform ratio: {platform_ratio:.6f} m/px")
-
-        # 在帧的左下角绘制帧数和秒数
-        text = f"Frames: {frame_count}, Seconds: {seconds:.3f}"
-        cv2.putText(output_image, text, (10, frame_height - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1, cv2.LINE_AA)
-        # 提取并显示当前帧的宽度
-        if detected_widths:
-            current_width = detected_widths[0][4]  # 提取第一个检测框的宽度
-            cv2.putText(output_image, f"Platform Width: {current_width} px", (10, frame_height - 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # 实时显示处理后的视频帧
-        cv2.imshow("Output Video", output_image)
-
-        # 写入帧到输出视频
-        out.write(output_image) 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        elif key == ord(' '):
+            paused = not paused
 
     # 結束時提示用戶選擇 CSV 文件的保存位置
     root = tk.Tk()
