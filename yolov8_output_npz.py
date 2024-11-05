@@ -188,26 +188,37 @@ class Keypoint():
         pred = np.transpose(pred[0], (1, 0))
         conf = 0.7
         pred = pred[pred[:, 4] > conf]
+        
+        # 如果沒有檢測到物體，返回符合 Detectron2 格式的空結構
         if len(pred) == 0:
-            return [], []  # 沒有檢測到的物件，返回空列表
+            return [np.empty((0, 5), dtype=np.float32)], [np.empty((0, 3), dtype=np.float32)]
+        
         bboxs = xywh2xyxy(pred)
         bboxs = nms(bboxs, iou_thresh=0.6)
         bboxs = np.array(bboxs)
         bboxs = xyxy2xywh(bboxs)
         bboxs = scale_boxes(img.shape, bboxs, image.shape)
-
-        boxes, keypoints, segments = [], [], []
+        
+        # 構建符合 Detectron2 格式的嵌套結構，確保為 list([]) 結構並統一數據型別為 float32
+        cls_boxes, cls_keyps = [np.empty((0, 5), dtype=np.float32)], [np.empty((0, 3), dtype=np.float32)]
+        bboxes = []
+        keypoints = []
+        
         for box in bboxs:
-            # Bounding box (左上角 x, 左上角 y, 右下角 x, 右下角 y)
-            det_bbox = box[:4].tolist()
-            boxes.append([det_bbox])  # 包裝成嵌套格式
-            
-            # Keypoints [(x, y, confidence), (x, y, confidence), ...]
-            kpts = box[5:]
-            kpts_formatted = [[kpts[i], kpts[i + 1], kpts[i + 2]] for i in range(0, len(kpts), 3)]
-            keypoints.append(kpts_formatted)
+            # Bounding box in Detectron2 format with confidence score
+            det_bbox = [float(box[0]), float(box[1]), float(box[2]), float(box[3]), float(box[4])]
+            bboxes.append(det_bbox)
 
-        return boxes, keypoints
+            # Keypoints [(x, y, confidence), ...] in Detectron2 format
+            kpts = box[5:]
+            kpts_formatted = [[float(kpts[i]), float(kpts[i + 1]), float(kpts[i + 2])] if i + 2 < len(kpts) else [0.0, 0.0, 0.0] for i in range(0, 51, 3)]
+            keypoints.append(kpts_formatted)
+            
+        # 將列表轉換為 numpy 陣列，確保 cls_boxes[1] 和 cls_keyps[1] 是統一的形狀
+        cls_boxes[0] = np.array(bboxes, dtype=np.float32)
+        cls_keyps[0] = np.array(keypoints, dtype=np.float32)
+
+        return cls_boxes, cls_keyps
             
 if __name__ == '__main__':
     model_path = 'weights/yolov8x-pose.onnx'
@@ -237,17 +248,20 @@ if __name__ == '__main__':
         if not ret:
             break
 
+        # 每幀的檢測結果
         boxes, keypoints = keydet.inference(frame)
         all_boxes.append(boxes)
         all_keypoints.append(keypoints)
 
         frame_count += 1
 
+    # 添加影片解析度的 metadata
     metadata = {"w": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), "h": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}
+    
+    # 保存成 npz 文件，符合 Detectron2 的嵌套結構
     np.savez(output_file_path, boxes=np.array(all_boxes, dtype=object), segments=np.array([[]]*len(all_boxes), dtype=object), keypoints=np.array(all_keypoints, dtype=object), metadata=metadata)
 
     cap.release()
     print(f"檢測結果已保存至 {output_file_path}")
-
 
 
