@@ -9,7 +9,7 @@ from tkinter import filedialog
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from utils import letterbox, pre_process, xywh2xyxy, nms, scale_boxes, plot_skeleton_kpts, xyxy2xywh, Keypoint
+from utils import Keypoint
 
             
 if __name__ == '__main__':
