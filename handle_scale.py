@@ -519,16 +519,7 @@ if __name__ == '__main__':
             break
         elif key == ord(' '):
             paused = not paused
-        elif key == ord('a'):  # 按下 'a' 返回上一帧
-            if paused and frame_count > 1:
-                frame_count -= 1
-                output_image = frames_buffer[frame_count - 1].copy()
-                cv2.imshow("Output Video", output_image)
-        elif key == ord('d'):  # 按下 'd' 前进到下一帧
-            if paused and frame_count < len(frames_buffer):
-                frame_count += 1
-                output_image = frames_buffer[frame_count - 1].copy()
-                cv2.imshow("Output Video", output_image)
+
         
         # 计算并显示点击点与髋部坐标的距离
         if paused:
