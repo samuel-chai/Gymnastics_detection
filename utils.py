@@ -137,6 +137,12 @@ def scale_boxes(img1_shape, boxes, img0_shape):
     clip_boxes(boxes, img0_shape)
     return boxes
 
+def scale_keypoints(kpts, gain, dw, dh):
+    """根據縮放比例和填充量，調整關鍵點的座標。"""
+    kpts[0::3] = (kpts[0::3] - dw) / gain  # x-coordinates
+    kpts[1::3] = (kpts[1::3] - dh) / gain  # y-coordinates
+    return kpts
+
 def clip_boxes(boxes, shape):
     # 进行一个边界截断，以免溢出
     # 并且将检测框的坐标（左上角x，左上角y，宽度，高度）--->>>（左上角x，左上角y，右下角x，右下角y）
