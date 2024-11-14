@@ -335,11 +335,11 @@ class Keypoint():
 
 
         # 在视频帧的左上角显示髋部的平均坐标
-        if hip_x_avg is not None and hip_y_relative is not None:
+        if self.hip_x_avg is not None and self.hip_y_relative is not None:
             cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # 在视频帧的左上角显示左肘和左腕的夹角
-        if angle is not None:
+        if self.angle is not None:
             cv2.putText(image, f"Angle between arm & platform: {self.angle:.2f} degrees", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
             
         # 在视频帧的左上角显示左大腿和身体的夹角
