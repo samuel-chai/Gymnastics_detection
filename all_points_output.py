@@ -7,6 +7,7 @@ import io
 import tkinter as tk
 from tkinter import filedialog
 import pandas as pd
+import xlsxwriter
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -168,7 +169,7 @@ class Keypoint():
         self.angle_knee_left = None  # 初始化 angle_knee_left
         self.angle_knee_right = None  # 初始化 angle_knee_right
 
-    def inference(self, image):
+    def inference(self, image):        
         img, (dw, dh) = letterbox(image)  # 缩放并填充图像
         data = pre_process(img)  # 预处理数据
 
@@ -179,7 +180,7 @@ class Keypoint():
         pred = pred[pred[:, 4] > conf]
         if len(pred) == 0:
             print("没有检测到任何关键点")
-            return image
+            return image, []
 
         # 转换 bbox 格式并进行 NMS
         bboxs = xywh2xyxy(pred)
@@ -188,7 +189,7 @@ class Keypoint():
         gain = min(img.shape[0] / image.shape[0], img.shape[1] / image.shape[1])
 
         # 初始化变量
-        
+        all_kpts = []
 
         # 绘制检测结果
         for box in bboxs:
@@ -208,11 +209,15 @@ class Keypoint():
             ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]
 
             # 提取左肘和左腕的坐标
-            # 提取左肘和左腕的座標（COCO 格式的正確索引）
             elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
             wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
 
-             # 检查是否检测到所有四个关键点
+            if self.platform_ratio is not None:
+                kpts[0::3] *= self.platform_ratio # 調整x坐標
+                kpts[1::3] *= self.platform_ratio # 調整y坐標
+            all_kpts.append(kpts)
+
+            # 检查是否检测到所有四个关键点
             if shoulder_right_y > 0.5 and shoulder_left_y > 0.5 and hip_right_y > 0.5 and hip_left_y > 0.5:
                 # 计算髋部的平均坐标
                 self.hip_x_avg = (hip_right_x + hip_left_x) / 2
@@ -244,9 +249,9 @@ class Keypoint():
 
                 # 确保结果在 0-180° 之间（只考虑前臂与水平线夹角的正值）
                 if self.angle > 180:
-                    self.angle = 360 - self.langle
+                    self.angle = 360 - self.angle
                     
-           # 計算左大腿直線(左膝和左髋部)和身體(左hip和左shoulder)連線間的夾角
+            # 計算左大腿直線(左膝和左髋部)和身體(左hip和左shoulder)連線間的夾角
             if knee_left_x is not None and hip_left_x is not None and shoulder_left_x is not None:
                 # 向量1: 从左髋到左膝
                 dx1 = knee_left_x - hip_left_x
@@ -332,8 +337,6 @@ class Keypoint():
 
                 self.angle_knee_right = angle_knee_right
 
-
-
         # 在视频帧的左上角显示髋部的平均坐标
         if self.hip_x_avg is not None and self.hip_y_relative is not None:
             cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -356,7 +359,7 @@ class Keypoint():
         # 绘制骨架和关键点
         plot_skeleton_kpts(image, kpts)
 
-        return image
+        return image, all_kpts
 
 
 class ObjectDetection():
@@ -396,6 +399,42 @@ class ObjectDetection():
                 cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             return image, widths
+        
+def calculate_velocity(results, fps=60):
+    """
+    根据关键点的坐标计算每个点的速度 (x 和 y 方向)，单位为 m/s。
+    :param results: 原始帧数据，每帧的关键点坐标。
+    :param fps: 视频帧率，默认 60 FPS。
+    :return: 每帧关键点速度的数据。
+    """
+    velocities = []
+    time_interval = 1 / fps  # 每帧时间间隔（秒）
+
+    for i in range(1, len(results)):
+        prev_frame = results[i - 1]
+        curr_frame = results[i]
+        frame_id = curr_frame[0]  # 当前帧号
+
+        # 初始化当前帧的速度数据
+        velocity_row = [frame_id]
+        for j in range(1, len(curr_frame), 2):  # 遍历每个关键点的 x, y 坐标
+            prev_x, prev_y = prev_frame[j], prev_frame[j + 1]
+            curr_x, curr_y = curr_frame[j], curr_frame[j + 1]
+            
+            # 如果关键点坐标无效，跳过
+            if prev_x == 0 or prev_y == 0 or curr_x == 0 or curr_y == 0:
+                velocity_row.extend([0, 0])
+            else:
+                # 计算速度
+                vel_x = (curr_x - prev_x) / time_interval
+                vel_y = (curr_y - prev_y) / time_interval
+                velocity_row.extend([vel_x, vel_y])
+
+
+        velocities.append(velocity_row)
+
+    return velocities
+
 
 if __name__ == '__main__':
     keypoint_model_path = 'weights/yolov8x-pose.onnx'
@@ -454,7 +493,7 @@ if __name__ == '__main__':
             break
 
         # 对读入的帧进行人体关键点检测
-        frame = keydet.inference(frame)
+        frame, all_kpts = keydet.inference(frame)
         # 对读入的帧进行物体检测
         output_image, detected_widths = obj_det.inference(frame)
 
@@ -462,27 +501,25 @@ if __name__ == '__main__':
         frame_count += 1
         elapsed_time = time.time() - start_time
         seconds = elapsed_time
-
-        # 提取髋部的平均座標和角度
-        hip_x_avg = keydet.hip_x_avg if keydet.hip_x_avg is not None else 0
-        hip_y_relative = keydet.hip_y_relative if keydet.hip_y_relative is not None else 0
-        angle = keydet.angle if keydet.angle is not None else 0
-        angle_thigh_body = keydet.angle_thigh_body if keydet.angle_thigh_body is not None else 0
-        angle_knee_left = keydet.angle_knee_left if keydet.angle_knee_left is not None else 0
-        angle_knee_right = keydet.angle_knee_right if keydet.angle_knee_right is not None else 0
-
-        # 收集當前幀的數據
-        results.append([frame_count, seconds, hip_x_avg, hip_y_relative, angle, angle_thigh_body, angle_knee_left, angle_knee_right])
         
 
-        # 计算前100帧的平均宽度
-        if frame_count <= 100:
+        # 计算前z00帧的平均宽度
+        if frame_count <= 5:
             widths.extend([width for _, _, _, _, width in detected_widths])
-            if frame_count == 100:
+            if frame_count == 5:
                 average_width = sum(widths) / len(widths)
                 platform_ratio = 1.25 / average_width
                 keydet.platform_ratio = platform_ratio  # 设置 platform_ratio
                 print(f"Platform ratio: {platform_ratio:.6f} m/px")
+
+        if all_kpts is not None:
+            for kpts in all_kpts:
+                frame_data = [frame_count]
+                for i in range(17):
+                    frame_data.append(kpts[i*3])  # x
+                    frame_data.append(kpts[i*3+1])  # y
+                results.append(frame_data)
+
 
         # 在帧的左下角绘制帧数和秒数
         text = f"Frames: {frame_count}, Seconds: {seconds:.3f}"
@@ -509,22 +546,39 @@ if __name__ == '__main__':
     filetypes=[("CSV files", "*.csv")]
     
 )
-    # 如果選擇了保存位置，將結果保存為 CSV
-    # if output_csv_path:
-    #     df = pd.DataFrame(results, columns=["Frame", "Seconds", "Hip_X(m)", "Hip_Y(m)", "Angle(deg)"])
-    #     df.to_csv(output_csv_path, index=False)
-    #     print(f"CSV 文件已保存至: {output_csv_path}")
-    # else:
-    #     print("Error: No save location selected.")
-        
-    if output_csv_path:
-        df = pd.DataFrame(results, columns=["Frame", "Seconds", "Hip_X(m)", "Hip_Y(m)", "Angle(deg)", "Thigh_Body_Angle(deg)", "Left_Knee_Angle(deg)", "Right_Knee_Angle(deg)"])
-        df.to_csv(output_csv_path, index=False)
-        print(f"CSV 文件已保存至: {output_csv_path}")
-    else:
-        print("Error: No save location selected.")
+# 提示用户选择保存位置
+output_csv_path = filedialog.asksaveasfilename(
+    title="选择保存 Excel 文件位置", 
+    defaultextension=".xlsx",  # 改为 .xlsx
+    filetypes=[("Excel files", "*.xlsx"), ("All Files", "*.*")]
+)
 
+if output_csv_path:
+    if not output_csv_path.endswith(".xlsx"):
+        output_csv_path += ".xlsx"
 
+    keypoint_names = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
+                      "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
+                      "left_knee", "right_knee", "left_ankle", "right_ankle"]
+    # 创建列名
+    coordinate_columns = ["Frame"] + [f"{name}_X" for name in keypoint_names] + [f"{name}_Y" for name in keypoint_names]
+    velocity_columns = ["Frame"] + [f"{name}_Vel_X" for name in keypoint_names] + [f"{name}_Vel_Y" for name in keypoint_names]
+
+    velocity_data = calculate_velocity(results)
+
+    # 使用 ExcelWriter 保存到多个表
+    with pd.ExcelWriter(output_csv_path, engine='xlsxwriter') as writer:
+        # 保存关键点坐标数据到第一个表
+        coord_df = pd.DataFrame(results, columns=coordinate_columns)
+        coord_df.to_excel(writer, sheet_name='Coordinates', index=False)
+        # 保存速度数据到第二个表
+        if velocity_data:  # 检查是否存在速度数据（至少两帧才能计算速度）
+            velocity_df = pd.DataFrame(velocity_data, columns=velocity_columns)
+            velocity_df.to_excel(writer, sheet_name='Velocity', index=False)
+
+    print(f"CSV 文件已保存至: {output_csv_path}")
+else:
+    print("Error: No save location selected.")
     # 释放资源
     cap.release()
     out.release()  # 释放 VideoWriter 对象
