@@ -179,7 +179,6 @@ class Keypoint():
 
         pred = pred[pred[:, 4] > conf]
         if len(pred) == 0:
-            print("没有检测到任何关键点")
             return image, []
 
         # 转换 bbox 格式并进行 NMS
@@ -503,10 +502,10 @@ if __name__ == '__main__':
         seconds = elapsed_time
         
 
-        # 计算前z00帧的平均宽度
-        if frame_count <= 5:
+        # 计算前100帧的平均宽度
+        if frame_count <= 100:
             widths.extend([width for _, _, _, _, width in detected_widths])
-            if frame_count == 5:
+            if frame_count == 100:
                 average_width = sum(widths) / len(widths)
                 platform_ratio = 1.25 / average_width
                 keydet.platform_ratio = platform_ratio  # 设置 platform_ratio
@@ -516,10 +515,15 @@ if __name__ == '__main__':
             for kpts in all_kpts:
                 frame_data = [frame_count]
                 for i in range(17):
-                    frame_data.append(kpts[i*3])  # x
-                    frame_data.append(kpts[i*3+1])  # y
+                    if keydet.hip_x_avg is not None and keydet.hip_y_relative is not None:
+                        # 从原点开始计算
+                        rel_x = kpts[i * 3] - keydet.hip_x_avg
+                        rel_y = kpts[i * 3 + 1] - keydet.hip_y_relative
+                    else:
+                        rel_x = kpts[i * 3]
+                        rel_y = kpts[i * 3 + 1]
+                    frame_data.extend([rel_x, rel_y])  # 依序加入 X 和 Y
                 results.append(frame_data)
-
 
         # 在帧的左下角绘制帧数和秒数
         text = f"Frames: {frame_count}, Seconds: {seconds:.3f}"
@@ -540,37 +544,36 @@ if __name__ == '__main__':
     # 結束時提示用戶選擇 CSV 文件的保存位置
     root = tk.Tk()
     root.withdraw()  # 隱藏主窗口
+
+    # 提示用户选择保存位置
     output_csv_path = filedialog.asksaveasfilename(
-    title="選擇保存 CSV 文件位置", 
-    defaultextension=".csv", 
-    filetypes=[("CSV files", "*.csv")]
-    
-)
-# 提示用户选择保存位置
-output_csv_path = filedialog.asksaveasfilename(
-    title="选择保存 Excel 文件位置", 
-    defaultextension=".xlsx",  # 改为 .xlsx
-    filetypes=[("Excel files", "*.xlsx"), ("All Files", "*.*")]
-)
+        title="选择保存 Excel 文件位置", 
+        defaultextension=".xlsx",  # 改为 .xlsx
+        filetypes=[("Excel files", "*.xlsx"), ("All Files", "*.*")]
+    )
 
 if output_csv_path:
     if not output_csv_path.endswith(".xlsx"):
         output_csv_path += ".xlsx"
 
-    keypoint_names = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
-                      "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_hip", "right_hip",
-                      "left_knee", "right_knee", "left_ankle", "right_ankle"]
-    # 创建列名
+    # 创建新的列名（nose_X, nose_Y, ... 依次排列）
+    keypoint_names = ["nose", "left_eye", "right_eye", "left_ear", "right_ear", 
+                    "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", 
+                    "left_wrist", "right_wrist", "left_hip", "right_hip", 
+                    "left_knee", "right_knee", "left_ankle", "right_ankle"]
+
+    # 修改列名的顺序为 XY 配对排列
     coordinate_columns = ["Frame"] + [f"{name}_X" for name in keypoint_names] + [f"{name}_Y" for name in keypoint_names]
+
     velocity_columns = ["Frame"] + [f"{name}_Vel_X" for name in keypoint_names] + [f"{name}_Vel_Y" for name in keypoint_names]
 
     velocity_data = calculate_velocity(results)
 
-    # 使用 ExcelWriter 保存到多个表
     with pd.ExcelWriter(output_csv_path, engine='xlsxwriter') as writer:
         # 保存关键点坐标数据到第一个表
         coord_df = pd.DataFrame(results, columns=coordinate_columns)
         coord_df.to_excel(writer, sheet_name='Coordinates', index=False)
+        
         # 保存速度数据到第二个表
         if velocity_data:  # 检查是否存在速度数据（至少两帧才能计算速度）
             velocity_df = pd.DataFrame(velocity_data, columns=velocity_columns)
