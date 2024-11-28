@@ -193,24 +193,23 @@ class ObjectDetection():
                 cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             return image, widths
         
-def calculate_velocity(results, fps=60):
+def calculate_velocity(results):
     """
     根据关键点的坐标计算每个点的速度 (x 和 y 方向)，单位为 m/s。
     :param results: 原始帧数据，每帧的关键点坐标。
-    :param fps: 视频帧率，默认 60 FPS。
     :return: 每帧关键点速度的数据。
     """
     velocities = []
-    time_interval = 1 / fps  # 每帧时间间隔（秒）
 
     for i in range(1, len(results)):
         prev_frame = results[i - 1]
         curr_frame = results[i]
         frame_id = curr_frame[0]  # 当前帧号
+        time_interval = curr_frame[1] - prev_frame[1]  # 计算时间间隔（秒）
 
         # 初始化当前帧的速度数据
         velocity_row = [frame_id]
-        for j in range(1, len(curr_frame), 2):  # 遍历每个关键点的 x, y 坐标
+        for j in range(2, len(curr_frame), 2):  # 遍历每个关键点的 x, y 坐标
             prev_x, prev_y = prev_frame[j], prev_frame[j + 1]
             curr_x, curr_y = curr_frame[j], curr_frame[j + 1]
             
@@ -223,11 +222,9 @@ def calculate_velocity(results, fps=60):
                 vel_y = (curr_y - prev_y) / time_interval
                 velocity_row.extend([vel_x, vel_y])
 
-
         velocities.append(velocity_row)
 
     return velocities
-
 # class Keypoint():
 #     def __init__(self, model_path):
 #         self.session = ort.InferenceSession(model_path, providers=providers)
@@ -594,10 +591,20 @@ if __name__ == '__main__':
                           "left_knee", "right_knee", "left_ankle", "right_ankle"]
         coordinate_columns = ["Frame", "Seconds"] + [f"{name}_{axis}" for name in keypoint_names for axis in ["X", "Y"]]
 
+        # 计算速度
+        velocities = calculate_velocity(results)
+
+        # 创建速度列名
+        velocity_columns = ["Frame"] + [f"{name}_{axis}_velocity" for name in keypoint_names for axis in ["X", "Y"]]    
+
         with pd.ExcelWriter(output_csv_path, engine='xlsxwriter') as writer:
             # 保存髋部和其他关键点的相对坐标数据到第一个表
             coord_df = pd.DataFrame(results, columns=coordinate_columns)
             coord_df.to_excel(writer, sheet_name='Coordinates', index=False)
+
+            # 保存速度数据到第二个表
+            velocity_df = pd.DataFrame(velocities, columns=velocity_columns)
+            velocity_df.to_excel(writer, sheet_name='Velocities', index=False)
 
         print(f"Excel 文件已保存至: {output_csv_path}")
     else:
