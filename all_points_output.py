@@ -155,124 +155,6 @@ def scale_keypoints(kpts, gain, dw, dh):
     kpts[1::3] = (kpts[1::3] - dh) / gain  # y-coordinates
     return kpts
 
-class Keypoint():
-    def __init__(self, model_path):
-        self.session = ort.InferenceSession(model_path, providers=providers)
-        self.input_name = self.session.get_inputs()[0].name
-        self.label_name = self.session.get_outputs()[0].name
-        self.hip_y_base = None  # 初始化基准点
-        self.platform_ratio = None  # 初始化 platform_ratio
-        self.hip_x_avg = None  # 初始化 hip_x_avg
-        self.hip_y_relative = None  # 初始化 hip_y_relative
-        self.nose_x = None  # 初始化 nose_x
-        self.nose_y = None  # 初始化 nose_y
-
-    def inference(self, image):        
-        img, (dw, dh) = letterbox(image)  # 缩放并填充图像
-        data = pre_process(img)  # 预处理数据
-
-        pred = self.session.run([self.label_name], {self.input_name: data.astype(np.float32)})[0]
-        pred = pred[0].transpose(1, 0)  # 调整输出形状
-        conf = 0.7  # 置信度阈值
-
-        pred = pred[pred[:, 4] > conf]
-        if len(pred) == 0:
-            return image, []
-
-        # 转换 bbox 格式并进行 NMS
-        bboxs = xywh2xyxy(pred)
-        bboxs = nms(bboxs, iou_thresh=0.6)
-        bboxs = np.array(bboxs)
-        gain = min(img.shape[0] / image.shape[0], img.shape[1] / image.shape[1])
-
-        # 初始化变量
-        all_kpts = []
-
-        # 绘制检测结果
-        for box in bboxs:
-            det_bbox, det_scores, kpts = box[:4], box[4], box[5:]
-            kpts = scale_keypoints(kpts, gain, dw, dh)  # 调整关键点坐标
-            
-            # 提取关键点的坐标
-            nose_x, nose_y = kpts[0 * 3], kpts[0 * 3 + 1]  # 鼻子
-            shoulder_left_x, shoulder_left_y = kpts[5 * 3], kpts[5 * 3 + 1]  # 左肩
-            shoulder_right_x, shoulder_right_y = kpts[6 * 3], kpts[6 * 3 + 1]  # 右肩
-            elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
-            elbow_right_x, elbow_right_y = kpts[8 * 3], kpts[8 * 3 + 1]  # 右肘
-            wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
-            wrist_right_x, wrist_right_y = kpts[10 * 3], kpts[10 * 3 + 1]  # 右腕
-            hip_left_x, hip_left_y = kpts[11 * 3], kpts[11 * 3 + 1]  # 左髖
-            hip_right_x, hip_right_y = kpts[12 * 3], kpts[12 * 3 + 1]  # 右髖
-            knee_left_x, knee_left_y = kpts[13 * 3], kpts[13 * 3 + 1]  # 左膝
-            knee_right_x, knee_right_y = kpts[14 * 3], kpts[14 * 3 + 1]  # 右膝
-            ankle_left_x, ankle_left_y = kpts[15 * 3], kpts[15 * 3 + 1]  # 左踝
-            ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]  # 右踝
-
-            if self.platform_ratio is not None:
-                kpts[0::3] *= self.platform_ratio  # 調整x坐標
-                kpts[1::3] *= self.platform_ratio  # 調整y坐標
-            all_kpts.append(kpts)
-
-            # 检查是否检测到所有四个关键点
-            if shoulder_right_y > 0.5 and shoulder_left_y > 0.5 and hip_right_y > 0.5 and hip_left_y > 0.5:
-                # 计算髋部的平均坐标
-                self.hip_x_avg = (hip_right_x + hip_left_x) / 2
-                hip_y_avg = (hip_right_y + hip_left_y) / 2
-
-                # 将原点设置在画面的右下角
-                self.hip_x_avg = image.shape[1] - self.hip_x_avg  # x 坐标从右边缘开始计算
-                hip_y_avg = image.shape[0] - hip_y_avg  # y 坐标从底部开始计算
-
-                # 如果基准点未设置，则设置基准点
-                if self.hip_y_base is None:
-                    self.hip_y_base = hip_y_avg
-
-                # 计算相对于基准点的 y 坐标
-                self.hip_y_relative = hip_y_avg - self.hip_y_base
-
-                # 将髋部的 x 和 y 坐标乘以 platform_ratio
-                if self.platform_ratio is not None:
-                    self.hip_x_avg *= self.platform_ratio
-                    self.hip_y_relative *= self.platform_ratio
-
-                # 计算鼻子相对于髋部的初始位置的坐标
-                self.nose_x = (image.shape[1] - nose_x) - self.hip_x_avg
-                self.nose_y = (image.shape[0] - nose_y) - self.hip_y_base
-
-                if self.platform_ratio is not None:
-                    self.nose_x *= self.platform_ratio
-                    self.nose_y *= self.platform_ratio
-
-                # 计算其他关键点相对于髋部的初始位置的坐标
-                keypoints = {
-                    "Nose": (nose_x, nose_y),
-                    "Left Shoulder": (shoulder_left_x, shoulder_left_y),
-                    "Right Shoulder": (shoulder_right_x, shoulder_right_y),
-                    "Left Elbow": (elbow_left_x, elbow_left_y),
-                    "Right Elbow": (elbow_right_x, elbow_right_y),
-                    "Left Wrist": (wrist_left_x, wrist_left_y),
-                    "Right Wrist": (wrist_right_x, wrist_right_y),
-                    "Left Knee": (knee_left_x, knee_left_y),
-                    "Right Knee": (knee_right_x, knee_right_y),
-                    "Left Ankle": (ankle_left_x, ankle_left_y),
-                    "Right Ankle": (ankle_right_x, ankle_right_y)
-                }
-
-                # 顯示hip的座標=
-                if self.hip_x_avg is not None and self.hip_y_relative is not None:
-                    cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                for key, (x, y) in keypoints.items():
-                    rel_x = (image.shape[1] - x) - self.hip_x_avg
-                    rel_y = (image.shape[0] - y) - self.hip_y_base
-                    if self.platform_ratio is not None:
-                        rel_x *= self.platform_ratio
-                        rel_y *= self.platform_ratio
-                    cv2.putText(image, f"{key}: ({rel_x:.2f} m, {rel_y:.2f} m)", (10, 90 + 30 * list(keypoints.keys()).index(key)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-            # 绘制骨架和关键点
-            plot_skeleton_kpts(image, kpts)
-
-            return image, all_kpts
 class ObjectDetection():
     def __init__(self, model_path):
         self.session = ort.InferenceSession(model_path, providers=providers)
@@ -346,6 +228,165 @@ def calculate_velocity(results, fps=60):
 
     return velocities
 
+# class Keypoint():
+#     def __init__(self, model_path):
+#         self.session = ort.InferenceSession(model_path, providers=providers)
+#         self.input_name = self.session.get_inputs()[0].name
+#         self.label_name = self.session.get_outputs()[0].name
+#         self.hip_y_base = None  # 初始化基准点
+#         self.platform_ratio = None  # 初始化 platform_ratio
+#         self.hip_x_avg = None  # 初始化 hip_x_avg
+#         self.hip_y_relative = None  # 初始化 hip_y_relative
+#         self.nose_x = None  # 初始化 nose_x
+#         self.nose_y = None  # 初始化 nose_y
+
+#     def inference(self, image):        
+#         img, (dw, dh) = letterbox(image)  # 缩放并填充图像
+#         data = pre_process(img)  # 预处理数据
+
+#         pred = self.session.run([self.label_name], {self.input_name: data.astype(np.float32)})[0]
+#         pred = pred[0].transpose(1, 0)  # 调整输出形状
+#         conf = 0.7  # 置信度阈值
+
+#         pred = pred[pred[:, 4] > conf]
+#         if len(pred) == 0:
+#             return image, []
+
+#         # 转换 bbox 格式并进行 NMS
+#         bboxs = xywh2xyxy(pred)
+#         bboxs = nms(bboxs, iou_thresh=0.6)
+#         bboxs = np.array(bboxs)
+#         gain = min(img.shape[0] / image.shape[0], img.shape[1] / image.shape[1])
+
+#         # 初始化变量
+#         all_kpts = []
+
+#         # 绘制检测结果
+#         for box in bboxs:
+#             det_bbox, det_scores, kpts = box[:4], box[4], box[5:]
+#             kpts = scale_keypoints(kpts, gain, dw, dh)  # 调整关键点坐标
+            
+#             # 提取关键点的坐标
+#             nose_x, nose_y = kpts[0 * 3], kpts[0 * 3 + 1]  # 鼻子
+#             shoulder_left_x, shoulder_left_y = kpts[5 * 3], kpts[5 * 3 + 1]  # 左肩
+#             shoulder_right_x, shoulder_right_y = kpts[6 * 3], kpts[6 * 3 + 1]  # 右肩
+#             elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
+#             elbow_right_x, elbow_right_y = kpts[8 * 3], kpts[8 * 3 + 1]  # 右肘
+#             wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
+#             wrist_right_x, wrist_right_y = kpts[10 * 3], kpts[10 * 3 + 1]  # 右腕
+#             hip_left_x, hip_left_y = kpts[11 * 3], kpts[11 * 3 + 1]  # 左髖
+#             hip_right_x, hip_right_y = kpts[12 * 3], kpts[12 * 3 + 1]  # 右髖
+#             knee_left_x, knee_left_y = kpts[13 * 3], kpts[13 * 3 + 1]  # 左膝
+#             knee_right_x, knee_right_y = kpts[14 * 3], kpts[14 * 3 + 1]  # 右膝
+#             ankle_left_x, ankle_left_y = kpts[15 * 3], kpts[15 * 3 + 1]  # 左踝
+#             ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]  # 右踝
+
+#             if self.platform_ratio is not None:
+#                 kpts[0::3] *= self.platform_ratio  # 調整x坐標
+#                 kpts[1::3] *= self.platform_ratio  # 調整y坐標
+#             all_kpts.append(kpts)
+
+#             # 检查是否检测到所有四个关键点
+#             if shoulder_right_y > 0.5 and shoulder_left_y > 0.5 and hip_right_y > 0.5 and hip_left_y > 0.5:
+#                 # 计算髋部的平均坐标
+#                 self.hip_x_avg = (hip_right_x + hip_left_x) / 2
+#                 hip_y_avg = (hip_right_y + hip_left_y) / 2
+
+#                 # 将原点设置在画面的右下角
+#                 self.hip_x_avg = image.shape[1] - self.hip_x_avg  # x 坐标从右边缘开始计算
+#                 hip_y_avg = image.shape[0] - hip_y_avg  # y 坐标从底部开始计算
+
+#                 # 如果基准点未设置，则设置基准点
+#                 if self.hip_y_base is None:
+#                     self.hip_y_base = hip_y_avg
+
+#                 # 计算相对于基准点的 y 坐标
+#                 self.hip_y_relative = hip_y_avg - self.hip_y_base
+
+#                 # 将髋部的 x 和 y 坐标乘以 platform_ratio
+#                 if self.platform_ratio is not None:
+#                     self.hip_x_avg *= self.platform_ratio
+#                     self.hip_y_relative *= self.platform_ratio
+
+#                 # 计算鼻子相对于髋部的初始位置的坐标
+#                 self.nose_x = (image.shape[1] - nose_x) - self.hip_x_avg
+#                 self.nose_y = (image.shape[0] - nose_y) - self.hip_y_base
+
+#                 if self.platform_ratio is not None:
+#                     self.nose_x *= self.platform_ratio
+#                     self.nose_y *= self.platform_ratio
+
+#                 # 计算其他关键点相对于髋部的初始位置的坐标
+#                 keypoints = {
+#                     "Nose": (nose_x, nose_y),
+#                     "Left Shoulder": (shoulder_left_x, shoulder_left_y),
+#                     "Right Shoulder": (shoulder_right_x, shoulder_right_y),
+#                     "Left Elbow": (elbow_left_x, elbow_left_y),
+#                     "Right Elbow": (elbow_right_x, elbow_right_y),
+#                     "Left Wrist": (wrist_left_x, wrist_left_y),
+#                     "Right Wrist": (wrist_right_x, wrist_right_y),
+#                     "Left Knee": (knee_left_x, knee_left_y),
+#                     "Right Knee": (knee_right_x, knee_right_y),
+#                     "Left Ankle": (ankle_left_x, ankle_left_y),
+#                     "Right Ankle": (ankle_right_x, ankle_right_y)
+#                 }
+
+#                 # 顯示hip的座標=
+#                 if self.hip_x_avg is not None and self.hip_y_relative is not None:
+#                     cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+#                 for key, (x, y) in keypoints.items():
+#                     rel_x = (image.shape[1] - x) - self.hip_x_avg
+#                     rel_y = (image.shape[0] - y) - self.hip_y_base
+#                     if self.platform_ratio is not None:
+#                         rel_x *= self.platform_ratio
+#                         rel_y *= self.platform_ratio
+#                     cv2.putText(image, f"{key}: ({rel_x:.2f} m, {rel_y:.2f} m)", (10, 90 + 30 * list(keypoints.keys()).index(key)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+#             # 绘制骨架和关键点
+#             plot_skeleton_kpts(image, kpts)
+
+#             return image, all_kpts
+
+class Keypoint():
+    def __init__(self, model_path):
+        self.session = ort.InferenceSession(model_path, providers=providers)
+        self.input_name = self.session.get_inputs()[0].name
+        self.label_name = self.session.get_outputs()[0].name
+        self.hip_y_base = None  # 初始化基准点
+        self.platform_ratio = None  # 初始化 platform_ratio
+        self.hip_x_avg = None  # 初始化 hip_x_avg
+        self.hip_y_relative = None  # 初始化 hip_y_relative
+
+    def inference(self, image):        
+        img, (dw, dh) = letterbox(image)  # 缩放并填充图像
+        data = pre_process(img)  # 预处理数据
+
+        pred = self.session.run([self.label_name], {self.input_name: data.astype(np.float32)})[0]
+        pred = pred[0].transpose(1, 0)  # 调整输出形状
+        conf = 0.7  # 置信度阈值
+
+        pred = pred[pred[:, 4] > conf]
+        if len(pred) == 0:
+            return image, []
+
+        # 转换 bbox 格式并进行 NMS
+        bboxs = xywh2xyxy(pred)
+        bboxs = nms(bboxs, iou_thresh=0.6)
+        bboxs = np.array(bboxs)
+        gain = min(img.shape[0] / image.shape[0], img.shape[1] / image.shape[1])
+
+        # 初始化变量
+        all_kpts = []
+
+        # 绘制检测结果
+        for box in bboxs:
+            det_bbox, det_scores, kpts = box[:4], box[4], box[5:]
+            kpts = scale_keypoints(kpts, gain, dw, dh)  # 调整关键点坐标
+            
+            # 提取关键点的坐标
+            all_kpts.append(kpts)
+
+        return image, all_kpts
 
 if __name__ == '__main__':
     keypoint_model_path = 'weights/yolov8x-pose.onnx'
@@ -422,6 +463,97 @@ if __name__ == '__main__':
                 platform_ratio = 1.25 / average_width
                 keydet.platform_ratio = platform_ratio  # 设置 platform_ratio
                 print(f"Platform ratio: {platform_ratio:.6f} m/px")
+                
+        # 处理关键点数据
+        for kpts in all_kpts:
+            # 提取关键点的坐标
+            nose_x, nose_y = kpts[0 * 3], kpts[0 * 3 + 1]  # 鼻子
+            shoulder_left_x, shoulder_left_y = kpts[5 * 3], kpts[5 * 3 + 1]  # 左肩
+            shoulder_right_x, shoulder_right_y = kpts[6 * 3], kpts[6 * 3 + 1]  # 右肩
+            elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
+            elbow_right_x, elbow_right_y = kpts[8 * 3], kpts[8 * 3 + 1]  # 右肘
+            wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
+            wrist_right_x, wrist_right_y = kpts[10 * 3], kpts[10 * 3 + 1]  # 右腕
+            hip_left_x, hip_left_y = kpts[11 * 3], kpts[11 * 3 + 1]  # 左髖
+            hip_right_x, hip_right_y = kpts[12 * 3], kpts[12 * 3 + 1]  # 右髖
+            knee_left_x, knee_left_y = kpts[13 * 3], kpts[13 * 3 + 1]  # 左膝
+            knee_right_x, knee_right_y = kpts[14 * 3], kpts[14 * 3 + 1]  # 右膝
+            ankle_left_x, ankle_left_y = kpts[15 * 3], kpts[15 * 3 + 1]  # 左踝
+            ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]  # 右踝
+
+            if platform_ratio is not None:
+                kpts[0::3] *= platform_ratio  # 調整x坐標
+                kpts[1::3] *= platform_ratio  # 調整y坐標
+
+            # 检查是否检测到所有四个关键点
+            if shoulder_right_y > 0.5 and shoulder_left_y > 0.5 and hip_right_y > 0.5 and hip_left_y > 0.5:
+                # 计算髋部的平均坐标
+                hip_x_avg = (hip_right_x + hip_left_x) / 2
+                hip_y_avg = (hip_right_y + hip_left_y) / 2
+
+                # 将原点设置在画面的右下角
+                hip_x_avg = frame.shape[1] - hip_x_avg  # x 坐标从右边缘开始计算
+                hip_y_avg = frame.shape[0] - hip_y_avg  # y 坐标从底部开始计算
+
+                # 如果基准点未设置，则设置基准点
+                if keydet.hip_y_base is None:
+                    keydet.hip_y_base = hip_y_avg
+
+                # 计算相对于基准点的 y 坐标
+                hip_y_relative = hip_y_avg - keydet.hip_y_base
+
+                # 将髋部的 x 和 y 坐标乘以 platform_ratio
+                if platform_ratio is not None:
+                    hip_x_avg *= platform_ratio
+                    hip_y_relative *= platform_ratio
+
+                # 计算鼻子相对于髋部的初始位置的坐标
+                nose_x_rel = (frame.shape[1] - nose_x) - hip_x_avg
+                nose_y_rel = (frame.shape[0] - nose_y) - keydet.hip_y_base
+
+                if platform_ratio is not None:
+                    nose_x_rel *= platform_ratio
+                    nose_y_rel *= platform_ratio
+
+                # 计算其他关键点相对于髋部的初始位置的坐标
+                keypoints = {
+                    "Nose": (nose_x, nose_y),
+                    "Left Shoulder": (shoulder_left_x, shoulder_left_y),
+                    "Right Shoulder": (shoulder_right_x, shoulder_right_y),
+                    "Left Elbow": (elbow_left_x, elbow_left_y),
+                    "Right Elbow": (elbow_right_x, elbow_right_y),
+                    "Left Wrist": (wrist_left_x, wrist_left_y),
+                    "Right Wrist": (wrist_right_x, wrist_right_y),
+                    "Left Knee": (knee_left_x, knee_left_y),
+                    "Right Knee": (knee_right_x, knee_right_y),
+                    "Left Ankle": (ankle_left_x, ankle_left_y),
+                    "Right Ankle": (ankle_right_x, ankle_right_y)
+                }
+
+                # 顯示hip的座標
+                if hip_x_avg is not None and hip_y_relative is not None:
+                    cv2.putText(output_image, f"Hip: ({hip_x_avg:.2f} m, {hip_y_relative:.2f} m)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                for key, (x, y) in keypoints.items():
+                    rel_x = (frame.shape[1] - x) - hip_x_avg
+                    rel_y = (frame.shape[0] - y) - keydet.hip_y_base
+                    if platform_ratio is not None:
+                        rel_x *= platform_ratio
+                        rel_y *= platform_ratio
+                    cv2.putText(output_image, f"{key}: ({rel_x:.2f} m, {rel_y:.2f} m)", (10, 90 + 30 * list(keypoints.keys()).index(key)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                # 绘制骨架和关键点
+                plot_skeleton_kpts(output_image, kpts)
+
+                # 保存髋部和其他关键点的相对坐标数据
+                frame_data = [frame_count, seconds, hip_x_avg, hip_y_relative]
+                for key in ["Nose", "Left Shoulder", "Right Shoulder", "Left Elbow", "Right Elbow", "Left Wrist", "Right Wrist", "Left Knee", "Right Knee", "Left Ankle", "Right Ankle"]:
+                    rel_x, rel_y = (frame.shape[1] - keypoints[key][0]) - hip_x_avg, (frame.shape[0] - keypoints[key][1]) - keydet.hip_y_base
+                    if platform_ratio is not None:
+                        rel_x *= platform_ratio
+                        rel_y *= platform_ratio
+                    frame_data.extend([rel_x, rel_y])
+                results.append(frame_data)
+
 
         # 在帧的左下角绘制帧数和秒数
         text = f"Frames: {frame_count}, Seconds: {seconds:.3f}"
@@ -443,3 +575,30 @@ if __name__ == '__main__':
     # 释放资源
     cap.release()
     out.release()  # 释放 VideoWriter 对象
+    cv2.destroyAllWindows()
+
+    # 提示用户选择保存位置
+    output_csv_path = filedialog.asksaveasfilename(
+        title="选择保存 Excel 文件位置", 
+        defaultextension=".xlsx",  # 改为 .xlsx
+        filetypes=[("Excel files", "*.xlsx"), ("All Files", "*.*")]
+    )
+
+    if output_csv_path:
+        if not output_csv_path.endswith(".xlsx"):
+            output_csv_path += ".xlsx"
+
+        # 创建新的列名
+        keypoint_names = ["hip", "nose", "left_shoulder", "right_shoulder", 
+                          "left_elbow", "right_elbow", "left_wrist", "right_wrist", 
+                          "left_knee", "right_knee", "left_ankle", "right_ankle"]
+        coordinate_columns = ["Frame", "Seconds"] + [f"{name}_{axis}" for name in keypoint_names for axis in ["X", "Y"]]
+
+        with pd.ExcelWriter(output_csv_path, engine='xlsxwriter') as writer:
+            # 保存髋部和其他关键点的相对坐标数据到第一个表
+            coord_df = pd.DataFrame(results, columns=coordinate_columns)
+            coord_df.to_excel(writer, sheet_name='Coordinates', index=False)
+
+        print(f"Excel 文件已保存至: {output_csv_path}")
+    else:
+        print("Error: No save location selected.")
