@@ -164,10 +164,8 @@ class Keypoint():
         self.platform_ratio = None  # 初始化 platform_ratio
         self.hip_x_avg = None  # 初始化 hip_x_avg
         self.hip_y_relative = None  # 初始化 hip_y_relative
-        self.angle = None
-        self.angle_thigh_body = None  # 初始化 angle_thigh_body
-        self.angle_knee_left = None  # 初始化 angle_knee_left
-        self.angle_knee_right = None  # 初始化 angle_knee_right
+        self.nose_x = None  # 初始化 nose_x
+        self.nose_y = None  # 初始化 nose_y
 
     def inference(self, image):        
         img, (dw, dh) = letterbox(image)  # 缩放并填充图像
@@ -195,25 +193,24 @@ class Keypoint():
             det_bbox, det_scores, kpts = box[:4], box[4], box[5:]
             kpts = scale_keypoints(kpts, gain, dw, dh)  # 调整关键点坐标
             
-            # 提取左右肩和左右髋部的坐标
+            # 提取关键点的坐标
+            nose_x, nose_y = kpts[0 * 3], kpts[0 * 3 + 1]  # 鼻子
             shoulder_left_x, shoulder_left_y = kpts[5 * 3], kpts[5 * 3 + 1]  # 左肩
             shoulder_right_x, shoulder_right_y = kpts[6 * 3], kpts[6 * 3 + 1]  # 右肩
+            elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
+            elbow_right_x, elbow_right_y = kpts[8 * 3], kpts[8 * 3 + 1]  # 右肘
+            wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
+            wrist_right_x, wrist_right_y = kpts[10 * 3], kpts[10 * 3 + 1]  # 右腕
             hip_left_x, hip_left_y = kpts[11 * 3], kpts[11 * 3 + 1]  # 左髖
             hip_right_x, hip_right_y = kpts[12 * 3], kpts[12 * 3 + 1]  # 右髖
-            
-            # 提取左右膝和左右腳踝的座標
-            knee_left_x, knee_left_y = kpts[13 * 3], kpts[13 * 3 + 1]
-            knee_right_x, knee_right_y = kpts[14 * 3], kpts[14 * 3 + 1]
-            ankle_left_x, ankle_left_y = kpts[15 * 3], kpts[15 * 3 + 1]
-            ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]
-
-            # 提取左肘和左腕的坐标
-            elbow_left_x, elbow_left_y = kpts[7 * 3], kpts[7 * 3 + 1]  # 左肘
-            wrist_left_x, wrist_left_y = kpts[9 * 3], kpts[9 * 3 + 1]  # 左腕
+            knee_left_x, knee_left_y = kpts[13 * 3], kpts[13 * 3 + 1]  # 左膝
+            knee_right_x, knee_right_y = kpts[14 * 3], kpts[14 * 3 + 1]  # 右膝
+            ankle_left_x, ankle_left_y = kpts[15 * 3], kpts[15 * 3 + 1]  # 左踝
+            ankle_right_x, ankle_right_y = kpts[16 * 3], kpts[16 * 3 + 1]  # 右踝
 
             if self.platform_ratio is not None:
-                kpts[0::3] *= self.platform_ratio # 調整x坐標
-                kpts[1::3] *= self.platform_ratio # 調整y坐標
+                kpts[0::3] *= self.platform_ratio  # 調整x坐標
+                kpts[1::3] *= self.platform_ratio  # 調整y坐標
             all_kpts.append(kpts)
 
             # 检查是否检测到所有四个关键点
@@ -237,130 +234,45 @@ class Keypoint():
                 if self.platform_ratio is not None:
                     self.hip_x_avg *= self.platform_ratio
                     self.hip_y_relative *= self.platform_ratio
-                            
-            # 计算左肘和左腕之间的连线与水平线的夹角
-            if elbow_left_x is not None and wrist_left_x is not None:
-                dx = wrist_left_x - elbow_left_x  # 注意这里的方向
-                dy = wrist_left_y - elbow_left_y  # 确保方向一致
 
-                # 使用 arctan2 计算夹角，并将其转换到 0-180 度范围
-                self.angle = np.degrees(np.arctan2(abs(dy), abs(dx)))  # 取绝对值保证方向一致
+                # 计算鼻子相对于髋部的初始位置的坐标
+                self.nose_x = (image.shape[1] - nose_x) - self.hip_x_avg
+                self.nose_y = (image.shape[0] - nose_y) - self.hip_y_base
 
-                # 确保结果在 0-180° 之间（只考虑前臂与水平线夹角的正值）
-                if self.angle > 180:
-                    self.angle = 360 - self.angle
-                    
-            # 計算左大腿直線(左膝和左髋部)和身體(左hip和左shoulder)連線間的夾角
-            if knee_left_x is not None and hip_left_x is not None and shoulder_left_x is not None:
-                # 向量1: 从左髋到左膝
-                dx1 = knee_left_x - hip_left_x
-                dy1 = knee_left_y - hip_left_y
+                if self.platform_ratio is not None:
+                    self.nose_x *= self.platform_ratio
+                    self.nose_y *= self.platform_ratio
 
-                # 向量2: 从左髋到左肩
-                dx2 = shoulder_left_x - hip_left_x
-                dy2 = shoulder_left_y - hip_left_y
+                # 计算其他关键点相对于髋部的初始位置的坐标
+                keypoints = {
+                    "Nose": (nose_x, nose_y),
+                    "Left Shoulder": (shoulder_left_x, shoulder_left_y),
+                    "Right Shoulder": (shoulder_right_x, shoulder_right_y),
+                    "Left Elbow": (elbow_left_x, elbow_left_y),
+                    "Right Elbow": (elbow_right_x, elbow_right_y),
+                    "Left Wrist": (wrist_left_x, wrist_left_y),
+                    "Right Wrist": (wrist_right_x, wrist_right_y),
+                    "Left Knee": (knee_left_x, knee_left_y),
+                    "Right Knee": (knee_right_x, knee_right_y),
+                    "Left Ankle": (ankle_left_x, ankle_left_y),
+                    "Right Ankle": (ankle_right_x, ankle_right_y)
+                }
 
-                # 计算向量的点积
-                dot_product = dx1 * dx2 + dy1 * dy2
+                # 顯示hip的座標=
+                if self.hip_x_avg is not None and self.hip_y_relative is not None:
+                    cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                for key, (x, y) in keypoints.items():
+                    rel_x = (image.shape[1] - x) - self.hip_x_avg
+                    rel_y = (image.shape[0] - y) - self.hip_y_base
+                    if self.platform_ratio is not None:
+                        rel_x *= self.platform_ratio
+                        rel_y *= self.platform_ratio
+                    cv2.putText(image, f"{key}: ({rel_x:.2f} m, {rel_y:.2f} m)", (10, 90 + 30 * list(keypoints.keys()).index(key)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                # 计算向量的模长
-                magnitude1 = np.sqrt(dx1**2 + dy1**2)
-                magnitude2 = np.sqrt(dx2**2 + dy2**2)
+            # 绘制骨架和关键点
+            plot_skeleton_kpts(image, kpts)
 
-                # 计算两个向量之间的夹角（弧度）
-                angle_radians = np.arccos(dot_product / (magnitude1 * magnitude2))
-
-                # 将弧度转换为角度
-                angle_thigh_body = np.degrees(angle_radians)
-
-                # 确保结果在 0-180° 之间
-                if angle_thigh_body > 180:
-                    angle_thigh_body = 360 - angle_thigh_body
-
-                self.angle_thigh_body = angle_thigh_body
-
-            # 計算膝蓋夾腳(hip到knee的連線與knee到ankle的連線), 左右都要計算
-            # 左膝
-            if hip_left_x is not None and knee_left_x is not None and ankle_left_x is not None:
-                # 向量1: 从左膝到左髋
-                dx1_left = hip_left_x - knee_left_x
-                dy1_left = hip_left_y - knee_left_y
-                # 向量2: 从左膝到左踝
-                dx2_left = ankle_left_x - knee_left_x
-                dy2_left = ankle_left_y - knee_left_y
-
-                # 计算向量的点积
-                dot_product_left = dx1_left * dx2_left + dy1_left * dy2_left
-
-                # 计算向量的模长
-                magnitude1_left = np.sqrt(dx1_left**2 + dy1_left**2)
-                magnitude2_left = np.sqrt(dx2_left**2 + dy2_left**2)
-
-                # 计算两个向量之间的夹角（弧度）
-                angle_radians_left = np.arccos(dot_product_left / (magnitude1_left * magnitude2_left))
-
-                # 将弧度转换为角度
-                angle_knee_left = np.degrees(angle_radians_left)
-
-                # 确保结果在 0-180° 之间
-                if angle_knee_left > 180:
-                    angle_knee_left = 360 - angle_knee_left
-
-                self.angle_knee_left = angle_knee_left
-
-            # 右膝
-            if hip_right_x is not None and knee_right_x is not None and ankle_right_x is not None:
-                # 向量1: 从右膝到右髋
-                dx1_right = hip_right_x - knee_right_x
-                dy1_right = hip_right_y - knee_right_y
-                # 向量2: 从右膝到右踝
-                dx2_right = ankle_right_x - knee_right_x
-                dy2_right = ankle_right_y - knee_right_y
-
-                # 计算向量的点积
-                dot_product_right = dx1_right * dx2_right + dy1_right * dy2_right
-
-                # 计算向量的模长
-                magnitude1_right = np.sqrt(dx1_right**2 + dy1_right**2)
-                magnitude2_right = np.sqrt(dx2_right**2 + dy2_right**2)
-
-                # 计算两个向量之间的夹角（弧度）
-                angle_radians_right = np.arccos(dot_product_right / (magnitude1_right * magnitude2_right))
-
-                # 将弧度转换为角度
-                angle_knee_right = np.degrees(angle_radians_right)
-
-                # 确保结果在 0-180° 之间
-                if angle_knee_right > 180:
-                    angle_knee_right = 360 - angle_knee_right
-
-                self.angle_knee_right = angle_knee_right
-
-        # 在视频帧的左上角显示髋部的平均坐标
-        if self.hip_x_avg is not None and self.hip_y_relative is not None:
-            cv2.putText(image, f"Hip: ({self.hip_x_avg:.2f} m, {self.hip_y_relative:.2f} m)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # 在视频帧的左上角显示左肘和左腕的夹角
-        if self.angle is not None:
-            cv2.putText(image, f"Angle between arm & platform: {self.angle:.2f} degrees", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            
-        # 在视频帧的左上角显示左大腿和身体的夹角
-        if self.angle_thigh_body is not None:
-            cv2.putText(image, f"Angle between thigh & body: {self.angle_thigh_body:.2f} degrees", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # 在视频帧的左上角显示左膝和右膝的夹角
-        if self.angle_knee_left is not None:
-            cv2.putText(image, f"Left Knee Angle: {self.angle_knee_left:.2f} degrees", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        if self.angle_knee_right is not None:
-            cv2.putText(image, f"Right Knee Angle: {self.angle_knee_right:.2f} degrees", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-        # 绘制骨架和关键点
-        plot_skeleton_kpts(image, kpts)
-
-        return image, all_kpts
-
-
+            return image, all_kpts
 class ObjectDetection():
     def __init__(self, model_path):
         self.session = ort.InferenceSession(model_path, providers=providers)
