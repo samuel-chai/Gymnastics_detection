@@ -225,6 +225,42 @@ def calculate_velocity(results):
         velocities.append(velocity_row)
 
     return velocities
+
+def calculate_acceleration(velocities):
+    """
+    根据关键点的速度计算每个点的加速度 (x 和 y 方向)，单位为 m/s^2。
+    :param velocities: 每帧的关键点速度数据。
+    :return: 每帧关键点加速度的数据。
+    """
+    accelerations = []
+
+    for i in range(1, len(velocities)):
+        prev_velocity = velocities[i - 1]
+        curr_velocity = velocities[i]
+        frame_id = curr_velocity[0]  # 当前帧号
+        time_interval = curr_velocity[1] - prev_velocity[1]  # 计算时间间隔（秒）
+
+        # 初始化当前帧的加速度数据
+        acceleration_row = [frame_id]
+        for j in range(2, len(curr_velocity), 2):  # 遍历每个关键点的 x, y 速度
+            if j + 1 < len(prev_velocity) and j + 1 < len(curr_velocity):
+                prev_vel_x, prev_vel_y = prev_velocity[j], prev_velocity[j + 1]
+                curr_vel_x, curr_vel_y = curr_velocity[j], curr_velocity[j + 1]
+                
+                # 如果关键点速度无效，跳过
+                if prev_vel_x == 0 or prev_vel_y == 0 or curr_vel_x == 0 or curr_vel_y == 0:
+                    acceleration_row.extend([0, 0])
+                else:
+                    # 计算加速度
+                    acc_x = (curr_vel_x - prev_vel_x) / time_interval
+                    acc_y = (curr_vel_y - prev_vel_y) / time_interval
+                    acceleration_row.extend([acc_x, acc_y])
+            else:
+                acceleration_row.extend([0, 0])
+
+        accelerations.append(acceleration_row)
+
+    return accelerations
 # class Keypoint():
 #     def __init__(self, model_path):
 #         self.session = ort.InferenceSession(model_path, providers=providers)
@@ -593,9 +629,13 @@ if __name__ == '__main__':
 
         # 计算速度
         velocities = calculate_velocity(results)
+        accelerations = calculate_acceleration(velocities)
 
         # 创建速度列名
         velocity_columns = ["Frame"] + [f"{name}_{axis}_velocity" for name in keypoint_names for axis in ["X", "Y"]]    
+
+        # 创建加速度列名
+        acceleration_columns = ["Frame"] + [f"{name}_{axis}_acceleration" for name in keypoint_names for axis in ["X", "Y"]]
 
         with pd.ExcelWriter(output_csv_path, engine='xlsxwriter') as writer:
             # 保存髋部和其他关键点的相对坐标数据到第一个表
@@ -605,6 +645,10 @@ if __name__ == '__main__':
             # 保存速度数据到第二个表
             velocity_df = pd.DataFrame(velocities, columns=velocity_columns)
             velocity_df.to_excel(writer, sheet_name='Velocities', index=False)
+
+            # 保存加速度数据到第三个表
+            acceleration_df = pd.DataFrame(accelerations, columns=acceleration_columns)
+            acceleration_df.to_excel(writer, sheet_name='Accelerations', index=False)
 
         print(f"Excel 文件已保存至: {output_csv_path}")
     else:
